@@ -100,7 +100,7 @@ OK: authenticated, created session <session-id>
 
 Сам идентификатор сессии не требуется сохранять в документации. Команда подтверждает, что AI Free смог создать DeepSeek chat session; это не гарантирует, что все последующие upstream-запросы будут проходить без сетевых сбоев.
 
-## 6. Подключение AI Free к Hermes
+## 6. Подключение DeepSeek к Hermes
 
 Подключение добавлялось через:
 
@@ -113,7 +113,7 @@ hermes model
 | Поле | Значение |
 |---|---|
 | Base URL | `http://127.0.0.1:4317/v1` |
-| API key | Локальный ключ AI Free из его настроек API; секрет не записывать в Git |
+| API key | Локальный ключ AI Free для DeepSeek; секрет не записывать в Git |
 | API compatibility | `2. Chat Completions` |
 | Model | `deepseek-v4-flash` |
 | Context length | Оставлено пустым для auto-detect |
@@ -128,26 +128,88 @@ Hermes сообщил, что endpoint проверен через `/v1/models`,
 4. `deepseek-chat`
 5. `deepseek-reasoner`
 
-После сохранения Hermes сообщил, что контекст auto-detected как 1M tokens. Это только значение, которое сообщил мастер Hermes; не следует автоматически считать его подтверждённым рабочим контекстным окном модели.
-
 Первый проверочный запрос в Hermes получил ответ от модели `deepseek-v4-flash`. Таким образом, связка была реально проверена запросом, а не только обнаружением списка моделей.
 
-## 7. Порты: не перепутать
+Hermes сообщил, что контекст auto-detected как 1M tokens. Это только значение, которое сообщил мастер Hermes; не следует автоматически считать его подтверждённым рабочим контекстным окном модели.
 
-В текущем README AI Free описан отдельный OpenAI/Anthropic API на `localhost:4318`, который запускается отдельной командой `npm run api`.
+## 7. Авторизация ChatGPT
+
+Встроенная панель 🧠 → Браузер → ChatGPT на этой машине зацикливалась на Cloudflare challenge. Рабочим оказался внешний видимый Chrome.
+
+При остановленном AI Free:
+
+```bash
+rm -rf ~/.chatgpt-cli
+cd ~/projects/ai-free
+CHATGPT_EMBED_IN_UI=0 npm run login-chatgpt
+```
+
+Терминал сообщил:
+
+```text
+Открываем окно ChatGPT (chatgpt.com).
+Используется обычный Google Chrome, не Playwright Chromium.
+✅ Успешный вход в ChatGPT! Окно браузера остаётся открытым.
+```
+
+Пользователь вручную прошёл Cloudflare и вошёл в ChatGPT. Команда сохраняет авторизацию самостоятельно в `~/.chatgpt-cli/auth.json`; ручная передача cookies или повторный импорт session JSON после такого успешного входа не нужны. Не публиковать содержимое этой папки.
+
+## 8. ChatGPT API key в AI Free
+
+Исходный код AI Free подтверждает:
+
+- `api/openai-handler.mjs` содержит ChatGPT provider/client;
+- `packages/core/src/providers/model-catalog.mjs` содержит модели ChatGPT;
+- `src/state/settings.mjs` генерирует отдельные ключи по provider ID: `deepseek`, `qwen`, `chatgpt`;
+- `src/window-app/server.mjs` реализует локальный endpoint `POST /api/settings/openai-key`, принимающий provider ID.
+
+В текущем UI Settings → API отображаются кнопки DeepSeek и Qwen, но кнопки ChatGPT нет. Поэтому после запуска window server отдельный ChatGPT key можно получить через локальный endpoint:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:4317/api/settings/openai-key \\
+  -H 'Content-Type: application/json' \\
+  -d '{"provider":"chatgpt"}' \\
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["apiKey"])'
+```
+
+Команда выводит секретный локальный ChatGPT API key. Не отправлять его в переписку и не добавлять в GitHub. Сохранить для следующего шага мастера Hermes. Этот ключ не является платным API key OpenAI; он авторизует локальный прокси AI Free и связан с ChatGPT web-сессией, сохранённой выше.
+
+## 9. Подключение ChatGPT к Hermes
+
+AI Free должен быть запущен через `npm start`, чтобы window server слушал `127.0.0.1:4317`.
+
+Через `hermes model` добавить **новый именованный Custom OpenAI-compatible endpoint**, не заменяя существующий `AI Free — DeepSeek`:
+
+| Поле | Значение |
+|---|---|
+| Base URL | `http://127.0.0.1:4317/v1` |
+| API key | Отдельный ChatGPT key, созданный для `provider: chatgpt` |
+| API compatibility | `2. Chat Completions` |
+| Model | Выбрать из списка, возвращённого именно ChatGPT key через `/v1/models` |
+| Display name | `AI Free — ChatGPT` |
+| Context length | Оставить пустым для auto-detect |
+
+Не использовать DeepSeek key для ChatGPT. AI Free сопоставляет ключ с provider ID и фильтрует список моделей по провайдеру. Модельный каталог на момент просмотра содержит `gpt-5.5-instant` как default ChatGPT model и семейство GPT-5.6 Sol; при настройке Hermes руководствоваться фактическим списком `/v1/models` из установленной версии, а не слепо копировать название из документации.
+
+Hermes поддерживает несколько именованных custom providers в конфигурации. Использовать отдельное имя для ChatGPT, чтобы сохранить и DeepSeek endpoint.
+
+## 10. Порты: не перепутать
+
+В README AI Free описан отдельный OpenAI/Anthropic API на `localhost:4318`, который запускается отдельной командой `npm run api`.
 
 Одновременно window server на `127.0.0.1:4317` в этой установке также обслужил `/v1/models` и `/v1/chat/completions`: Hermes проверил список моделей на порту 4317, а журнал AI Free записал входящие запросы на `/v1/chat/completions` с этого процесса.
 
 Итого:
 
-- `4317` — рабочее окно / window server; именно этот адрес уже проверен в Hermes.
+- `4317` — рабочее окно / window server; именно этот адрес уже проверен в Hermes и содержит локальные настройки API key.
 - `4318` — отдельный API mode из README; его самостоятельный запуск здесь отдельно не проверялся.
 
 Не менять Base URL Hermes на 4318, пока отдельный API-сервер действительно не запущен и не проверен.
 
-## 8. Эксплуатационные правила
+## 11. Эксплуатационные правила
 
-- AI Free должен быть запущен, пока Hermes использует его API.
+- AI Free должен быть запущен, пока Hermes использует его API на 4317.
 - Не закрывать процесс `npm start` во время работы Hermes через порт 4317.
-- DeepSeek добавлен в Hermes как отдельный custom provider. Существующий профиль Unsloth/Qwen не удалялся и не заменялся.
+- DeepSeek и ChatGPT добавлять как отдельные именованные custom providers с разными API keys.
+- Существующий профиль Unsloth/Qwen Hermes не удалять и не заменять.
 - В случае HTTP 500 смотреть `~/.ai-free/logs/ai-free.log`, а не переустанавливать зависимости.
